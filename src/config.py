@@ -1,1 +1,16 @@
 # src/config.py
+"""
+Configuration settings for the SMTP simulation server.
+"""
+
+# === SERVER SETTINGS ===
+SMTP_HOST="127.0.0.1"
+SMTP_PORT=2525  
+SERVER_DOMAIN="localhost"
+
+# === LIMITS ===
+MAX_CLIENTS=10
+RECV_BUFFER_SIZE=1024
+CONNECTION_TIMEOUT=300  
+MAX_MESSAGE_SIZE=10*1024*1024  
+MAX_RECIPIENTS=100
