@@ -4,10 +4,14 @@ import socket
 import threading
 from enum import Enum, auto
 from typing import Optional, List, Tuple
+from auth import Authenticator
+from queue import MessageQueue
 
 import config
 from logger import log_info, log_error
 
+GLOBAL_QUEUE = MessageQueue()
+GLOBAL_QUEUE.start_worker()
 
 # SMTP Session States
 class SmtpState(Enum):
@@ -81,27 +85,55 @@ class SmtpSession:
         
         self.client_hostname = argument
         self.state = SmtpState.HELO
-        # just to avoid bugs we reset sender recipient and message_data
+        
         self.sender = None
         self.recipients = []
         self.message_data = None
         
         self.send_response(250, f"{config.SERVER_DOMAIN} Hello {argument}")
         log_info(f"[{self.address}] Client identified as: {argument}")
-    
+
     def handle_auth(self, argument: str) -> None:
+        """
+        Handles the SMTP AUTH command using the PLAIN mechanism (two-step or one-step).
+        """
         if self.state not in (SmtpState.HELO, SmtpState.AUTH):
             self.send_response(503, "Bad sequence of commands")
             return
 
-        if argument.upper().startswith("QUENTIN"):
+        args = argument.strip().split(maxsplit=1)
+        mechanism = args[0].upper() if args else ""
+
+        if mechanism != "PLAIN":
+            self.send_response(504, "Unrecognized authentication type or syntax error")
+            return
+
+        if len(args) > 1:
+            auth_data = args[1]
+            
+        else:
+    
+            self.send_response(334, "VXNlcm5hbWU6")
+            
+            auth_data = self.receive_line()
+            
+            if not auth_data or auth_data.strip() == "*":
+                self.send_response(501, "Authentication aborted")
+                return
+
+        is_valid, message = Authenticator.validate_plain_auth(auth_data)
+
+        if is_valid:
             self.authenticated = True
             self.state = SmtpState.AUTH
-            self.send_response(235, "Authentication successful")
-            log_info(f"[{self.address}] Client authenticated")
+            self.send_response(235, "2.7.0 Authentication successful")
+            log_info(f"[{self.address}] Client successfully authenticated")
         else:
-            self.send_response(504, "Not authorized")
+            self.authenticated = False
+            self.send_response(535, "5.7.8 Authentication credentials invalid")
+            log_error(f"[{self.address}] Authentication failed: {message}")
     
+
     def handle_mail_from(self, argument: str) -> None:
         if self.state not in (SmtpState.HELO, SmtpState.AUTH):
             self.send_response(503, "Bad sequence of commands")
@@ -164,8 +196,7 @@ class SmtpSession:
 
         self.message_data = message
         
-        # TODO: queue the message 
-        # TODO: store the message
+        GLOBAL_QUEUE.enqueue(self.sender, self.recipients, self.message_data)
         
         log_info(f"[{self.address}] Message received: {len(message)} bytes, "
                  f"from {self.sender} to {self.recipients}")
